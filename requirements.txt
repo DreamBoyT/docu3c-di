@@ -13,3 +13,7 @@ pypdf
 faiss-cpu
 nltk
 gensim
+
+
+
+
