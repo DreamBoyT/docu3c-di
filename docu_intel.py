@@ -5,8 +5,6 @@ import time
 import concurrent.futures
 from langchain import LLMChain, PromptTemplate
 from langchain.document_loaders import PyPDFLoader
-from langchain.vectorstores import FAISS
-from langchain.chains.question_answering import load_qa_chain
 from PyPDF2 import PdfReader
 from io import BytesIO
 from docx import Document as DocxDocument
@@ -16,9 +14,12 @@ import nltk
 from nltk.corpus import stopwords
 from gensim import corpora
 from gensim.models.ldamodel import LdaModel
-from langchain.text_splitter import CharacterTextSplitter
 
-nltk.download('stopwords')
+# Set the path for NLTK data
+nltk.data.path.append('/path/to/your/nltk_data')
+
+# Ensure the stopwords are available
+nltk.download('stopwords', download_dir='/path/to/your/nltk_data')
 
 # Azure OpenAI API details
 azure_api_key = 'c09f91126e51468d88f57cb83a63ee36'
@@ -182,7 +183,8 @@ if pdf_file is not None:
         pages = loader.load_and_split()
 
     summary_option = "Generate 3 Page Summary (default)"
-    overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=3)
+    with st.spinner('Processing the PDF file...'):
+        overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=3)
 
     if overall_summary:
         topics_data = extract_topic_data(overall_summary)
