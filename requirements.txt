@@ -12,3 +12,4 @@ langchain_community
 pypdf
 faiss-cpu
 nltk
+gensim
