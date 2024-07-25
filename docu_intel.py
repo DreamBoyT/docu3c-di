@@ -5,21 +5,30 @@ import time
 import concurrent.futures
 from langchain import LLMChain, PromptTemplate
 from langchain.document_loaders import PyPDFLoader
+from langchain.vectorstores import FAISS
+from langchain.chains.question_answering import load_qa_chain
 from PyPDF2 import PdfReader
 from io import BytesIO
 from docx import Document as DocxDocument
 import base64
 import re
 import nltk
-from nltk.corpus import stopwords
 from gensim import corpora
 from gensim.models.ldamodel import LdaModel
+from langchain.text_splitter import CharacterTextSplitter
 
-# Set the path for NLTK data
-nltk.data.path.append('/path/to/your/nltk_data')
-
-# Ensure the stopwords are available
-nltk.download('stopwords', download_dir='/path/to/your/nltk_data')
+# Predefined list of stopwords
+stopwords_list = [
+    'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves',
+    'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their',
+    'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was',
+    'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and',
+    'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between',
+    'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off',
+    'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
+    'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
+    'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now'
+]
 
 # Azure OpenAI API details
 azure_api_key = 'c09f91126e51468d88f57cb83a63ee36'
@@ -66,7 +75,7 @@ def extract_text_from_pdf(file):
     return [(i + 1, preprocess_text(page.extract_text())) for i, page in enumerate(reader.pages)]
 
 def extract_topics(texts, num_topics=4, num_words=5):
-    stop_words = set(stopwords.words('english'))
+    stop_words = set(stopwords_list)
     texts = [[word for word in text.split() if word not in stop_words] for _, text in texts]
     dictionary = corpora.Dictionary(texts)
     corpus = [dictionary.doc2bow(text) for text in texts]
@@ -183,8 +192,7 @@ if pdf_file is not None:
         pages = loader.load_and_split()
 
     summary_option = "Generate 3 Page Summary (default)"
-    with st.spinner('Processing the PDF file...'):
-        overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=3)
+    overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=3)
 
     if overall_summary:
         topics_data = extract_topic_data(overall_summary)
