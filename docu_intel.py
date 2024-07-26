@@ -1,7 +1,6 @@
 import streamlit as st
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 import tempfile
-import time
 import concurrent.futures
 from langchain import LLMChain, PromptTemplate
 from langchain.document_loaders import PyPDFLoader
@@ -18,17 +17,7 @@ from gensim.models.ldamodel import LdaModel
 from langchain.text_splitter import CharacterTextSplitter
 
 # Predefined list of stopwords
-stopwords_list = [
-    'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves',
-    'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their',
-    'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was',
-    'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and',
-    'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between',
-    'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off',
-    'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
-    'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
-    'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now'
-]
+stopwords_list = [...]
 
 # Azure OpenAI API details
 azure_api_key = 'c09f91126e51468d88f57cb83a63ee36'
@@ -81,11 +70,11 @@ def extract_topics(texts, num_topics=4, num_words=5):
     corpus = [dictionary.doc2bow(text) for text in texts]
     lda = LdaModel(corpus, num_topics=num_topics, id2word=dictionary, passes=10)
     topics = lda.print_topics(num_words=num_words)
-    return topics
+    return [(i + 1, topic) for i, topic in enumerate(topics)]
 
 def create_prompt(page_numbers, combined_text, topics):
     combined_text = combined_text.replace("{", "{{").replace("}", "}}")
-    topics_text = "\n".join([f"Topic {i+1}: {topic}" for i, topic in enumerate(topics)])
+    topics_text = "\n".join([f"Topic {i}: {topic}" for i, (_, topic) in enumerate(topics)])
     
     return f"""
     For each of the key topics extracted from the text, please provide the following information in a clear and structured format:
@@ -151,8 +140,9 @@ def generate_word_file(topics_data):
         doc.add_heading(topic_data['topic'], level=1)
         doc.add_heading('Subtopics', level=2)
         for i, subtopic in enumerate(topic_data['subtopics']):
-            # Remove any leading numbering from the subtopic text
-            subtopic = re.sub(r'^\d+\.\s*', '', subtopic)
+            # Remove any leading numbering and page numbers from the subtopic text
+            subtopic = re.sub(r'^\d+\.\s*', '', subtopic)  # Remove any leading numbering
+            subtopic = re.sub(r'Page \d+:', '', subtopic)  # Remove page numbers if present
             doc.add_paragraph(f"{i+1}. {subtopic}", style='List Number')
     
     buffer = BytesIO()
@@ -177,93 +167,107 @@ def extract_topic_data(summary_text):
     summaries = summaries[:min_length]
 
     for i in range(min_length):
+        subtopics_list = subtopics[i].strip().split('\n')
+        # Remove any page numbers from subtopics
+        subtopics_list = [re.sub(r'Page \d+:', '', subtopic) for subtopic in subtopics_list]
         topics_data.append({
             'topic': topics[i],
-            'subtopics': subtopics[i].strip().split('\n'),
+            'subtopics': subtopics_list,
             'summary': summaries[i].strip()
         })
     return topics_data
 
+# Updated UI code with session state
 if pdf_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(pdf_file.read())
-        pdf_path = tmp_file.name
-        loader = PyPDFLoader(pdf_path)
-        pages = loader.load_and_split()
+    if 'overall_summary' not in st.session_state:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(pdf_file.read())
+            pdf_path = tmp_file.name
+            loader = PyPDFLoader(pdf_path)
+            pages = loader.load_and_split()
+        overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=3)
+        st.session_state.overall_summary = overall_summary
+    else:
+        overall_summary = st.session_state.overall_summary
 
-    summary_option = "Generate 3 Page Summary (default)"
-    overall_summary = extract_summaries_from_pdf(llm, pdf_path, group_size=3)
+    topics_data = extract_topic_data(overall_summary)
+    if 'selected_topic_indices' not in st.session_state:
+        st.session_state.selected_topic_indices = []
 
-    if overall_summary:
-        topics_data = extract_topic_data(overall_summary)
-        
-        with st.container():
-            st.subheader(pdf_file.name)
-            for topic_data in topics_data:
-                with st.expander(topic_data['topic']):
-                    st.write("Subtopics:")
-                    for i, subtopic in enumerate(topic_data['subtopics']):
-                        # Remove any leading numbering from the subtopic text
-                        subtopic = re.sub(r'^\d+\.\s*', '', subtopic)
-                        st.write(f"{i+1}. {subtopic}")
-                    st.write("Summary:")
-                    st.write(topic_data['summary'])
+    selected_topics = []
+    
+    with st.container():
+        st.subheader(pdf_file.name)
+        for i, topic_data in enumerate(topics_data):
+            expander = st.expander(f"Topic {i+1}: {topic_data['topic']}")
+            with expander:
+                st.write("Subtopics:")
+                for subtopic in topic_data['subtopics']:
+                    st.write(subtopic)
+                checkbox = st.checkbox(f"Select Topic {i+1}: {topic_data['topic']}", key=f"checkbox_{i}", value=i in st.session_state.selected_topic_indices)
+                if checkbox and i not in st.session_state.selected_topic_indices:
+                    st.session_state.selected_topic_indices.append(i)
+                elif not checkbox and i in st.session_state.selected_topic_indices:
+                    st.session_state.selected_topic_indices.remove(i)
 
-        with st.container():
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                pass
-            with col2:
-                word_file = generate_word_file(topics_data)
-                file_name = pdf_file.name.rsplit('.', 1)[0] + "_topics.docx"
-                st.markdown(
-                    f"""
-                    <style>
-                    .download-button {{
-                        position: relative;
-                        display: inline-block;
-                        margin-top: 10px;
-                    }}
-                    .download-button button {{
-                        background-color: #1a1c23;
-                        color: white;
-                        border: 2px solid #262730;
-                        border-radius: 8px;
-                        padding: 10px 20px;
-                        cursor: pointer;
-                        font-size: 14px;
-                        transition: background-color 0.3s, border-color 0.3s;
-                    }}
-                    .download-button button:hover {{
-                        border-color: #1a1c23;
-                    }}
-                    .tooltip {{
-                        visibility: hidden;
-                        width: 160px;
-                        background-color: #555;
-                        color: #fff;
-                        text-align: center;
-                        border-radius: 5px;
-                        padding: 5px 0;
-                        position: absolute;
-                        z-index: 1;
-                        bottom: 125%;
-                        left: 50%;
-                        margin-left: -80px;
-                        opacity: 0;
-                        transition: opacity 0.3s;
-                    }}
-                    .download-button:hover .tooltip {{
-                        visibility: visible;
-                        opacity: 1;
-                    }}
-                    </style>
-                    <div class="download-button">
-                        <a href="data:application/octet-stream;base64,{base64.b64encode(word_file.getvalue()).decode()}" download="{file_name}">
-                            <button>Download Topics</button>
-                            <span class="tooltip" style="background-color: #1a1c23;">Download the topics and subtopics in Word format</span>
-                        </a>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+    if st.button("Generate Summary"):
+        if st.session_state.selected_topic_indices:
+            selected_summaries = [topics_data[i]['summary'] for i in st.session_state.selected_topic_indices]
+            st.subheader("Selected Topics Summary")
+            st.write("\n\n".join(selected_summaries))
+            
+            word_file = generate_word_file([topics_data[i] for i in st.session_state.selected_topic_indices])
+            file_name = pdf_file.name.rsplit('.', 1)[0] + "_topics.docx"
+            st.markdown(
+                f"""
+                <style>
+                .download-button {{
+                    position: relative;
+                    display: inline-block;
+                    margin-top: 10px;
+                }}
+                .download-button button {{
+                    background-color: #1a1c23;
+                    color: white;
+                    border: 2px solid #262730;
+                    border-radius: 8px;
+                    padding: 10px 20px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    transition: background-color 0.3s, border-color 0.3s;
+                }}
+                .download-button button:hover {{
+                    border-color: #1a1c23;
+                }}
+                .tooltip {{
+                    visibility: hidden;
+                    width: 160px;
+                    background-color: #555;
+                    color: #fff;
+                    text-align: center;
+                    border-radius: 5px;
+                    padding: 5px 0;
+                    position: absolute;
+                    z-index: 1;
+                    bottom: 125%;
+                    left: 50%;
+                    margin-left: -80px;
+                    opacity: 0;
+                    transition: opacity 0.3s;
+                }}
+                .download-button:hover .tooltip {{
+                    visibility: visible;
+                    opacity: 1;
+                }}
+                </style>
+                <div class="download-button">
+                    <a href="data:application/octet-stream;base64,{base64.b64encode(word_file.getvalue()).decode()}" download="{file_name}">
+                        <button>Download Topics</button>
+                        <span class="tooltip" style="background-color: #1a1c23;">Download the topics and subtopics in Word format</span>
+                    </a>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.warning("Please select at least one topic to generate a summary.")
